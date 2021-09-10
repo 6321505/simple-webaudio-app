@@ -250,7 +250,6 @@ registerProcessor("Record", Record);
 			const wavBytes = getWavBytes(interleaved.buffer, {
 			isFloat: true,
 			numChannels: 2,
-			//音源のサンプリングレートに合わせてここを変更
 			sampleRate: sampleRate //44100
 			});
 			const wav = new Blob([wavBytes], { type: 'audio/wav' });
@@ -333,37 +332,24 @@ registerProcessor("Record", Record);
 			animationId = requestAnimationFrame(render);
 		};
 		
-		//音を出す関数
 		function play(hz) {
-
-			//2種類の音を作る
 			var osciillator = audioContext.createOscillator();
 			var osciillator2 = audioContext.createOscillator();
 
-			//2種類目の音は1オクターブ上（Hzが2倍でオクターブ上）
 			osciillator.frequency.value = hz;
 			osciillator2.frequency.value = hz * 2;
 
-			//音量(Gain)変更フィルター
 			var gainNode = audioContext.createGain();
 			var gainNode2 = audioContext.createGain();
 
-			//音の出始める時刻を取得
 			var currentTime = audioContext.currentTime;
 
-			//音を線形に音量変化させる
 			gainNode.gain.linearRampToValueAtTime(1, currentTime);
 			gainNode.gain.linearRampToValueAtTime(0, currentTime + 1.60);
-
-			//2種類目の音は音量を小さく初めて少し長めに
 			gainNode2.gain.linearRampToValueAtTime(0.2, currentTime);
 			gainNode2.gain.linearRampToValueAtTime(0, currentTime + 2.0);
-
-			//まず音量変更フィルkタに作った音を通す
 			osciillator.connect(gainNode);
 			osciillator2.connect(gainNode2);
-
-			//フィルタに通った音をスピーカーに接続
 			gainNode.connect(analyser);
 			gainNode.connect(recordNode);
 			gainNode2.connect(analyser);
