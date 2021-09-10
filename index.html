@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Audio Visualizer</title>
+	<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.0.0-beta1/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-giJF6kkoqNQ00vy+HMDP7azOuL0xtbfIcaT9wjKHr8RbDVddVHyTfAAsrekwKmP1" crossorigin="anonymous">
+	<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.0.0-beta1/dist/js/bootstrap.bundle.min.js" integrity="sha384-ygbV9kiqUc6oa4msXn9868pTtWMgiQaeYH7/t7LECLbyPA2x65Kgf80OJFdroafW" crossorigin="anonymous"></script>
+
+	<style>
+	.keys {
+      display: block;
+      width: 100%;
+      height: 350px;
+      max-width: 880px;
+      position: relative;
+      margin: 40px auto 0;
+      cursor: none;
+    }
+
+    .key {
+      position: relative;
+      border: 4px solid black;
+      border-radius: .5rem;
+      transition: all .07s ease;
+      display: block;
+      box-sizing: border-box;
+      z-index: 2;
+    }
+
+    .key:not(.sharp) {
+      float: left;
+      width: 10%;
+      height: 100%;
+      background: rgba(255, 255, 255, .8);    
+    }
+
+    .key.sharp {
+      position: absolute;
+      width: 6%;
+      height: 60%;
+      background: #000;
+      color: #eee;
+      top: 0;
+      z-index: 3;
+    }
+
+    .key[data-key="87"] {
+      left: 7%;
+    }
+
+    .key[data-key="69"] {
+      left: 17%;
+    }
+
+    .key[data-key="84"]  {
+      left: 37%;
+    }
+
+    .key[data-key="89"] {
+      left: 47%;
+    }
+
+    .key[data-key="85"] {
+      left: 57%;    
+    }
+
+    .key[data-key="79"] {
+      left: 77%;    
+    }
+
+    .key[data-key="80"] {
+      left: 87%;    
+    }
+
+    .playing {
+      transform: scale(.95);
+      border-color: #028ae9;
+      box-shadow: 0 0 1rem #028ae9;
+    }
+
+    .hints {
+      display: block;
+      width: 100%;
+      opacity: 0;
+      position: absolute;
+      bottom: 7px;
+      transition: opacity .3s ease-out;
+      font-size: 20px;
+    }
+
+    .keys:hover .hints {
+      opacity: 1;
+    }
+
+	.nowplaying {
+      font-size: 120px;
+      line-height: 1;
+      color: #eee;
+      text-shadow: 0 0 5rem #028ae9;
+      transition: all .07s ease;
+      min-height: 120px;
+    }
+		
+		
+	</style>
+
+    <script>
+const recordProcessor = `class Record extends AudioWorkletProcessor{
+    constructor() {
+      super();
+
+      this.chunkLeft = [];
+      this.chunkRight = [];
+      this.port.onmessage = (event) => {
+        this.port.postMessage({left:this.chunkLeft, right:this.chunkRight});
+      };
+    }
+
+    process(inputs, outputs, parameters){
+      let input = inputs[0];
+      let output = outputs[0];
+
+      for(let channel=0; channel<output.length; channel++){
+        for(let i=0; i<output[channel].length; i++){
+          if(input[channel]){
+            if(output.length == 1){
+              output[channel][i] = input[channel][i];
+              this.chunkLeft.push(output[channel][i]);
+              this.chunkRight.push(output[channel][i]);
+            } else if(output.length == 2){
+              if(channel === 0){
+                output[channel][i] = input[channel][i];
+                this.chunkLeft.push(output[channel][i]);
+              } else if(channel == 1){
+                output[channel][i] = input[channel][i];
+                this.chunkRight.push(output[channel][i]);
+              }
+            }
+          }
+        }
+      }
+      return true;
+    }
+  }
+registerProcessor("Record", Record);
+`;
+
+  const AudioContext = window.AudioContext || window.webkitAudioContext;
+
+	window.onload = async function(){
+		let source, animationId;
+		let audioContext = new AudioContext();
+		let fileReader;
+		　
+		var analyser = audioContext.createAnalyser();
+		analyser.fftSize = 256;
+
+		analyser.connect(audioContext.destination);
+
+		let chunkLeft = [];
+		let chunkRight = [];
+		let chunkLeftTmp = [];
+		let chunkRightTmp = [];
+
+		let sampleRate = 44100;
+
+		await audioContext.audioWorklet.addModule("data:application/javascript,"+encodeURI(recordProcessor));
+
+		let recordNode = new AudioWorkletNode(audioContext, "Record");
+
+		recordNode.port.onmessage = function(event){
+			chunkLeft = chunkLeftTmp.concat(event.data["left"]);
+			chunkLeftTmp = chunkLeft;
+			chunkRight = chunkRightTmp.concat(event.data["right"]);
+			chunkRightTmp = chunkRight;
+
+			make_wav(chunkLeft, chunkRight);
+		}
+
+		//analyser.connect(recordNode);
+
+		document.getElementById("start-recording-button").addEventListener("click", function(e){
+			source.connect(recordNode);
+		});
+		document.getElementById("stop-recording-button").addEventListener("click", function(e){
+			recordNode.port.postMessage("click");
+		});
+
+		function getWavBytes(buffer, options) {
+			const type = options.isFloat ? Float32Array : Uint16Array
+			const numFrames = buffer.byteLength / type.BYTES_PER_ELEMENT
+
+			const headerBytes = getWavHeader(Object.assign({}, options, { numFrames }))
+			const wavBytes = new Uint8Array(headerBytes.length + buffer.byteLength);
+
+			wavBytes.set(headerBytes, 0)
+			wavBytes.set(new Uint8Array(buffer), headerBytes.length)
+
+			return wavBytes
+		}
+
+
+		function getWavHeader(options) {
+			const numFrames =      options.numFrames
+			const numChannels =    options.numChannels || 2
+			const sampleRate =     options.sampleRate || 44100
+			const bytesPerSample = options.isFloat? 4 : 2
+			const format =         options.isFloat? 3 : 1
+
+			const blockAlign = numChannels * bytesPerSample
+			const byteRate = sampleRate * blockAlign
+			const dataSize = numFrames * blockAlign
+
+			const buffer = new ArrayBuffer(44)
+			const dv = new DataView(buffer)
+
+			let p = 0
+
+			function writeString(s) {
+				for (let i = 0; i < s.length; i++) {
+					dv.setUint8(p + i, s.charCodeAt(i))
+				}
+				p += s.length
+			}
+
+			function writeUint32(d) {
+				dv.setUint32(p, d, true)
+				p += 4
+			}
+
+			function writeUint16(d) {
+				dv.setUint16(p, d, true)
+				p += 2
+			}
+
+			writeString('RIFF')              // ChunkID
+			writeUint32(dataSize + 36)       // ChunkSize
+			writeString('WAVE')              // Format
+			writeString('fmt ')              // Subchunk1ID
+			writeUint32(16)                  // Subchunk1Size
+			writeUint16(format)              // AudioFormat
+			writeUint16(numChannels)         // NumChannels
+			writeUint32(sampleRate)          // SampleRate
+			writeUint32(byteRate)            // ByteRate
+			writeUint16(blockAlign)          // BlockAlign
+			writeUint16(bytesPerSample * 8)  // BitsPerSample
+			writeString('data')              // Subchunk2ID
+			writeUint32(dataSize)            // Subchunk2Size
+
+			return new Uint8Array(buffer)
+		}
+
+
+		function make_wav(chunkLs, chunkRs){
+			let chunkL = new Float32Array(chunkLs);
+			let chunkR = new Float32Array(chunkRs);
+			let [left, right] = [chunkLs, chunkRs];
+			let interleaved = new Float32Array(left.length+right.length);
+			for(let src=0,dst=0; src<left.length; src++,dst+=2){
+				interleaved[dst] = left[src];
+				interleaved[dst+1] = right[src];
+			}
+			const wavBytes = getWavBytes(interleaved.buffer, {
+			isFloat: true,
+			numChannels: 2,
+			//音源のサンプリングレートに合わせてここを変更
+			sampleRate: sampleRate //44100
+			});
+			const wav = new Blob([wavBytes], { type: 'audio/wav' });
+			let download = document.getElementById("download");
+			download.href = URL.createObjectURL(wav);
+			download.setAttribute('download', 'audio.wav');
+		}
+
+			　
+		var canvas        = document.getElementById('visualizer');
+		var canvasContext = canvas.getContext('2d');
+		canvas.setAttribute('height', analyser.frequencyBinCount * 2);
+		canvas.setAttribute('width', 256);
+		　
+		let isPlaying = false;
+		
+		　
+		document.getElementById('music-file').addEventListener('click', function(e){
+			e.target.value = '';
+		});
+
+		document.getElementById('music-file').addEventListener('change', function(e){
+			fileReader = new FileReader();
+
+			fileReader.onload = function(){
+				audioContext.decodeAudioData(fileReader.result, function(buffer){
+					if(source) {
+						isPlaying = false;
+						source.stop();
+						cancelAnimationFrame(animationId);
+					}
+
+					document.getElementById('play').addEventListener('click', function(e){
+						if (isPlaying == false){
+							audioContext.resume();
+							isPlaying = true;
+						}else{
+							audioContext.suspend();
+							isPlaying = false;
+						}
+					});
+						
+					document.getElementById('start').addEventListener('click', function(e){
+						if(!isPlaying){
+
+							source = audioContext.createBufferSource();
+							source.buffer = buffer;
+							sampleRate = buffer.sampleRate;
+
+
+							isPlaying = true;
+							source.connect(analyser);
+
+							source.onended = function(){
+								isPlaying = false;
+							}
+							source.start();
+							animationId = requestAnimationFrame(render);
+						}
+					});
+					
+					document.getElementById('stop').addEventListener('click', function(e){
+						isPlaying = false;
+						source.stop();
+					});
+					
+				});
+			};
+
+			fileReader.readAsArrayBuffer(e.target.files[0]);
+		});
+			render = function(){
+			var spectrums = new Uint8Array(analyser.frequencyBinCount);
+			analyser.getByteFrequencyData(spectrums);
+			canvasContext.clearRect(0, 0, canvas.width, canvas.height);
+			for(var i=0, len=spectrums.length; i<len; i++){
+				//canvasContext.fillRect(i*5, 0, 3, spectrums[i]);
+				canvasContext.fillRect(0, i*3, spectrums[i], 1);
+			}
+			animationId = requestAnimationFrame(render);
+		};
+		
+		//音を出す関数
+		function play(hz) {
+
+			//2種類の音を作る
+			var osciillator = audioContext.createOscillator();
+			var osciillator2 = audioContext.createOscillator();
+
+			//2種類目の音は1オクターブ上（Hzが2倍でオクターブ上）
+			osciillator.frequency.value = hz;
+			osciillator2.frequency.value = hz * 2;
+
+			//音量(Gain)変更フィルター
+			var gainNode = audioContext.createGain();
+			var gainNode2 = audioContext.createGain();
+
+			//音の出始める時刻を取得
+			var currentTime = audioContext.currentTime;
+
+			//音を線形に音量変化させる
+			gainNode.gain.linearRampToValueAtTime(1, currentTime);
+			gainNode.gain.linearRampToValueAtTime(0, currentTime + 1.60);
+
+			//2種類目の音は音量を小さく初めて少し長めに
+			gainNode2.gain.linearRampToValueAtTime(0.2, currentTime);
+			gainNode2.gain.linearRampToValueAtTime(0, currentTime + 2.0);
+
+			//まず音量変更フィルkタに作った音を通す
+			osciillator.connect(gainNode);
+			osciillator2.connect(gainNode2);
+
+			//フィルタに通った音をスピーカーに接続
+			gainNode.connect(analyser);
+			gainNode.connect(recordNode);
+			gainNode2.connect(analyser);
+			gainNode2.connect(recordNode);
+			osciillator.start = osciillator.start || osciillator.noteOn;
+			osciillator2.start = osciillator2.start || osciillator2.noteOn;
+			osciillator.start();
+			osciillator2.start();
+		}
+
+		let keys = document.getElementsByClassName("key");
+		for (i = 0; i < keys.length; i++) {
+			(function(i) {
+				keys[i].addEventListener("click", function() {
+					var h = 442 * Math.pow(2, (1 / 12) * (i - 9));
+					play(h);
+				}, false)
+			})(i)
+		}
+	};
+
+
+
+
+
+    </script>
+  </head>
+  <body>
+	<div class="container"><div class="row border-bottom display-1">Audio Visualiser</div></div>
+
+	<div class="container">
+		<div class="row my-2 ml-2 lead">
+			Please upload the file you want to play.
+		</div>
+		<div class="row my-2">
+			<div class="col-10">
+				<input class="form-control" type="file" id="music-file">
+			</div>
+
+		</div>
+		<div class="my-2">
+			<button id="start" class="btn btn-outline-dark">Start Music</button>
+			<button id="play" class="btn btn-outline-dark">Play/Pause</button>
+			<button id="stop" class="btn btn-outline-dark">Stop Music</button>
+		</div>
+		<div class="my-6 border-bottom"></div>
+		<div class="my-2">
+			<div class="row my-2 ml-2 lead">
+				To start or stop recording, click the button below.
+			</div>
+			<button id="start-recording-button" class="btn btn-outline-dark">Start Recording</button>
+			<button id="stop-recording-button" class="btn btn-outline-dark">Stop Recoding</button>
+			<a href id="download" class="btn btn-outline-dark">
+				Download
+			</a>
+		</div>
+		<div class="my-6 border-bottom"></div>
+		<div class="row my-2 justify-content-center">
+			<div class="my-6 col-10"></div>
+				<canvas id="visualizer" width="100%"></canvas>
+			</div>
+		</div>
+		<div class="my-2 mini-piano container">
+			<div class="my-6 border-bottom"></div>
+			<div class="lead justify-content-center">Mini Piano</div>
+			Usage: 
+			<section id="main">
+				<div class="keys">
+				  <div data-key="65" class="key" data-note="C">
+					  <span class="hints">A</span>
+				  </div>
+				  <div data-key="87" class="key sharp" data-note="C#">
+					  <span class="hints">W</span>
+				  </div>
+				  <div data-key="83" class="key" data-note="D">
+					  <span class="hints">S</span>
+				  </div>
+				  <div data-key="69" class="key sharp" data-note="D#">
+					  <span class="hints">E</span>
+				  </div>
+				  <div data-key="68" class="key" data-note="E">
+					  <span class="hints">D</span>
+				  </div>
+				  <div data-key="70" class="key" data-note="F">
+					  <span class="hints">F</span>
+				  </div>
+				  <div data-key="84" class="key sharp" data-note="F#">
+					  <span class="hints">T</span>
+				  </div>
+				  <div data-key="71" class="key" data-note="G">
+					  <span class="hints">G</span>
+				  </div>
+				  <div data-key="89" class="key sharp" data-note="G#">
+					  <span class="hints">Y</span>
+				  </div>
+				  <div data-key="72" class="key" data-note="A">
+					  <span class="hints">H</span>
+				  </div>
+				  <div data-key="85" class="key sharp" data-note="A#">
+					  <span class="hints">U</span>
+				  </div>
+				  <div data-key="74" class="key" data-note="B">
+					  <span class="hints">J</span>
+				  </div>
+				  <div data-key="75" class="key" data-note="C">
+					  <span class="hints">K</span>
+				  </div>
+				  <div data-key="79" class="key sharp" data-note="C#">
+					  <span class="hints">O</span>
+				  </div>
+				  <div data-key="76" class="key" data-note="D">
+					  <span class="hints">L</span>
+				  </div>
+				  <div data-key="80" class="key sharp" data-note="D#">
+					  <span class="hints">P</span>
+				  </div>
+				  <div data-key="186" class="key" data-note="E">
+					  <span class="hints">;</span>
+				  </div>
+				</div>
+		</div>
+		</div>
+  </body>
+</html>
